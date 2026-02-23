@@ -29,9 +29,9 @@ export type StrategyLayer = {
   useVerbatim: boolean
 }
 
-const FIELDS = ["Fund", "Strategy", "Business Unit", "Vehicle", "ESG", "Region", "Sector"]
+export const FIELDS = ["Fund", "Strategy", "Business Unit", "Vehicle", "ESG", "Region", "Sector"]
 const OPERATORS = ["equals", "contains", "starts with"]
-const VALUES: Record<string, string[]> = {
+export const VALUES: Record<string, string[]> = {
   Fund: ["Fund I", "Fund II", "Fund III", "Growth Fund", "Income Fund"],
   Strategy: ["Long/Short", "Market Neutral", "Global Macro", "Event Driven"],
   "Business Unit": ["Americas", "EMEA", "Asia Pacific", "Global"],
@@ -42,7 +42,7 @@ const VALUES: Record<string, string[]> = {
 }
 
 /* ── Multi-select value picker ── */
-function MultiValueSelect({
+export function MultiValueSelect({
   field,
   values,
   onChange,

@@ -4,161 +4,140 @@ import { useState, useCallback } from "react"
 import {
   RotateCcw,
   Plus,
-  Settings2,
-  ArrowDown,
-  FolderOpen,
-  FileText,
+  Lock,
+  ChevronRight,
   ChevronDown,
   ChevronUp,
-  Wand2,
+  GripVertical,
+  X,
+  Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { StrategyRow, type StrategyLayer, type GroupLogic } from "@/components/strategy-row"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
+import { type FilterCondition, FIELDS, VALUES, MultiValueSelect } from "@/components/strategy-row"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type ParsedStrategy = {
-  fallbackOrder: string[]
-  sources: { answerBank: boolean; supporting: boolean }
-  priorityLabel: string
-  verbatim: boolean
+type SimpleLayer = {
+  id: string
+  label: string
+  conditions: FilterCondition[]
 }
 
-// ── Default state ──────────────────────────────────────────────────────────────
+type Priority = "answer-bank" | "supporting" | "balanced"
 
-const DEFAULT_LAYERS: StrategyLayer[] = [
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const PREDEFINED_LAYERS: Omit<SimpleLayer, "id">[] = [
   {
-    id: "1",
+    label: "Fund + Vehicle",
     conditions: [
       { field: "Fund", operator: "equals", values: ["Fund I"], exclude: false },
       { field: "Vehicle", operator: "equals", values: ["LP", "SMA"], exclude: false },
     ],
-    groupLogic: "AND",
-    useAnswerBank: true,
-    useSupportingMaterials: true,
-    useVerbatim: true,
   },
   {
-    id: "2",
+    label: "Fund",
     conditions: [{ field: "Fund", operator: "equals", values: ["Fund I"], exclude: false }],
-    groupLogic: "AND",
-    useAnswerBank: true,
-    useSupportingMaterials: true,
-    useVerbatim: true,
   },
   {
-    id: "3",
+    label: "Strategy",
     conditions: [{ field: "Strategy", operator: "equals", values: ["Long/Short"], exclude: false }],
-    groupLogic: "AND",
-    useAnswerBank: true,
-    useSupportingMaterials: false,
-    useVerbatim: true,
+  },
+  {
+    label: "Business Unit",
+    conditions: [{ field: "Business Unit", operator: "equals", values: [], exclude: false }],
+  },
+  {
+    label: "Vehicle",
+    conditions: [{ field: "Vehicle", operator: "equals", values: [], exclude: false }],
+  },
+  {
+    label: "ESG",
+    conditions: [{ field: "ESG", operator: "equals", values: [], exclude: false }],
+  },
+  {
+    label: "Region",
+    conditions: [{ field: "Region", operator: "equals", values: [], exclude: false }],
+  },
+  {
+    label: "Sector",
+    conditions: [{ field: "Sector", operator: "equals", values: [], exclude: false }],
   },
 ]
 
-const DEFAULT_PROMPT =
-  "Start with Fund I + Vehicle (LP or SMA) responses from the Answer Bank. If none found, expand to Fund I only, then Long/Short Strategy, then Firmwide. Prefer Answer Bank over Supporting Materials. Ensure all answers are extracted verbatim from the Answer Bank or source material — do not generate AI responses."
+const DEFAULT_LAYERS: SimpleLayer[] = [
+  { id: "1", ...PREDEFINED_LAYERS[0] },
+  { id: "2", ...PREDEFINED_LAYERS[1] },
+  { id: "3", ...PREDEFINED_LAYERS[2] },
+]
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+const OPERATORS = ["equals", "not equals"]
 
-function buildLayerLabel(layer: StrategyLayer): string {
-  const parts = layer.conditions.map((c) => {
-    const prefix = c.exclude ? "!" : ""
-    return `${prefix}${c.field}`
-  })
-  const joiner = layer.groupLogic === "AND" ? " + " : " | "
-  return parts.join(joiner)
-}
+// ── Inline condition editor ────────────────────────────────────────────────────
 
-/** Derive a structured preview from the current layers state */
-function derivePreviewFromLayers(layers: StrategyLayer[]): ParsedStrategy {
-  const fallbackOrder = layers.map((l) => buildLayerLabel(l))
-  let answerBank = false
-  let supporting = false
-  for (const l of layers) {
-    if (l.useAnswerBank) answerBank = true
-    if (l.useSupportingMaterials) supporting = true
-  }
-  const abCount = layers.filter((l) => l.useAnswerBank && !l.useSupportingMaterials).length
-  const smCount = layers.filter((l) => l.useSupportingMaterials && !l.useAnswerBank).length
-  let priorityLabel = "Balanced"
-  if (abCount > smCount) priorityLabel = "Answer Bank first"
-  else if (smCount > abCount) priorityLabel = "Supporting Materials first"
-  const verbatimCount = layers.filter((l) => l.useVerbatim).length
-  return { fallbackOrder, sources: { answerBank, supporting }, priorityLabel, verbatim: verbatimCount > 0 }
-}
-
-// ── Preview strip ──────────────────────────────────────────────────────────────
-
-function StrategyPreview({ preview }: { preview: ParsedStrategy }) {
-  const { fallbackOrder, sources, priorityLabel, verbatim } = preview
+function InlineConditionRow({
+  condition,
+  index,
+  onUpdate,
+  onRemove,
+  showRemove,
+}: {
+  condition: FilterCondition
+  index: number
+  onUpdate: (i: number, c: FilterCondition) => void
+  onRemove: (i: number) => void
+  showRemove: boolean
+}) {
   return (
-    <div className="rounded-md border border-border bg-secondary/40 px-3 py-2.5 space-y-2">
-      {/* Fallback order */}
-      <div className="flex items-start gap-2 flex-wrap">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 pt-0.5 shrink-0">
-          Fallback
-        </span>
-        <div className="flex items-center gap-1 flex-wrap">
-          {fallbackOrder.map((label, i) => (
-            <span key={i} className="flex items-center gap-1">
-              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5 text-[11px] font-medium text-foreground shadow-sm">
-                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary/10 text-[9px] font-bold text-primary">
-                  {i + 1}
-                </span>
-                {label}
-              </span>
-              {i < fallbackOrder.length - 1 && (
-                <span className="text-muted-foreground/40 text-[10px]">→</span>
-              )}
-            </span>
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <Select
+        value={condition.field}
+        onValueChange={(val) => onUpdate(index, { ...condition, field: val, values: [] })}
+      >
+        <SelectTrigger className="h-7 w-[110px] text-xs bg-card">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {FIELDS.map((f) => (
+            <SelectItem key={f} value={f} className="text-xs">{f}</SelectItem>
           ))}
-          <span className="flex items-center gap-1">
-            <span className="text-muted-foreground/40 text-[10px]">→</span>
-            <Badge variant="outline" className="text-[10px] font-medium text-muted-foreground border-dashed h-5">
-              Firmwide
-            </Badge>
-          </span>
-        </div>
-      </div>
+        </SelectContent>
+      </Select>
 
-      {/* Meta row */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 pt-2">
-        {/* Sources */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Sources</span>
-          <div className="flex items-center gap-1">
-            {sources.answerBank && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-card border border-border px-1.5 py-0.5 text-[11px] font-medium text-foreground">
-                <FolderOpen className="h-3 w-3 text-muted-foreground" />
-                Answer Bank
-              </span>
-            )}
-            {sources.answerBank && sources.supporting && (
-              <span className="text-[10px] text-muted-foreground">+</span>
-            )}
-            {sources.supporting && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-card border border-border px-1.5 py-0.5 text-[11px] font-medium text-foreground">
-                <FileText className="h-3 w-3 text-muted-foreground" />
-                Supporting Materials
-              </span>
-            )}
-          </div>
-        </div>
+      <Select
+        value={condition.exclude ? "not equals" : "equals"}
+        onValueChange={(val) => onUpdate(index, { ...condition, exclude: val === "not equals" })}
+      >
+        <SelectTrigger className="h-7 w-[100px] text-xs bg-card">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {OPERATORS.map((op) => (
+            <SelectItem key={op} value={op} className="text-xs">{op}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-        {/* Priority */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Priority</span>
-          <span className="text-[11px] font-medium text-foreground">{priorityLabel}</span>
-        </div>
+      <MultiValueSelect
+        field={condition.field}
+        values={condition.values}
+        onChange={(vals) => onUpdate(index, { ...condition, values: vals })}
+      />
 
-        {/* Verbatim */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Verbatim</span>
-          <span className="text-[11px] font-medium text-foreground">{verbatim ? "On" : "Off"}</span>
-        </div>
-      </div>
+      {showRemove && (
+        <button
+          onClick={() => onRemove(index)}
+          className="rounded p-1 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+          aria-label="Remove condition"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
     </div>
   )
 }
@@ -166,59 +145,37 @@ function StrategyPreview({ preview }: { preview: ParsedStrategy }) {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function SearchStrategy() {
-  const [layers, setLayers] = useState<StrategyLayer[]>(DEFAULT_LAYERS)
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false)
+  const [layers, setLayers] = useState<SimpleLayer[]>(DEFAULT_LAYERS)
+  const [useAnswerBank, setUseAnswerBank] = useState(true)
+  const [useSupportingMaterials, setUseSupportingMaterials] = useState(true)
+  const [priority, setPriority] = useState<Priority>("answer-bank")
+  const [verbatim, setVerbatim] = useState(true)
+  const [showRefine, setShowRefine] = useState(false)
   const [isCustomized, setIsCustomized] = useState(false)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [addLayerOpen, setAddLayerOpen] = useState(false)
 
-  // Derive structured preview from layers
-  const preview = derivePreviewFromLayers(layers)
-
-  // When advanced editor changes layers, mark customized
-  const updateLayer = useCallback((id: string, updatedLayer: StrategyLayer) => {
-    setLayers((prev) => prev.map((l) => (l.id === id ? updatedLayer : l)))
-    setIsCustomized(true)
-  }, [])
-
-  const removeLayer = useCallback((id: string) => {
-    setLayers((prev) => prev.filter((l) => l.id !== id))
-    setIsCustomized(true)
-  }, [])
-
-  const addLayer = () => {
-    const newId = String(Date.now())
-    setLayers((prev) => [
-      ...prev,
-      {
-        id: newId,
-        conditions: [{ field: "Fund", operator: "equals", values: [], exclude: false }],
-        groupLogic: "AND" as GroupLogic,
-        useAnswerBank: true,
-        useSupportingMaterials: true,
-        useVerbatim: true,
-      },
-    ])
-    setIsCustomized(true)
-  }
+  const markCustomized = () => setIsCustomized(true)
 
   const reset = () => {
     setLayers(DEFAULT_LAYERS)
-    setPrompt(DEFAULT_PROMPT)
+    setUseAnswerBank(true)
+    setUseSupportingMaterials(true)
+    setPriority("answer-bank")
+    setVerbatim(true)
+    setShowRefine(false)
     setIsCustomized(false)
-    setIsAdvancedOpen(false)
   }
 
+  // ── Chip drag ──
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDragIndex(index)
     e.dataTransfer.effectAllowed = "move"
   }
-
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = "move"
   }
-
   const handleDrop = (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault()
     if (dragIndex === null || dragIndex === dropIndex) return
@@ -229,12 +186,75 @@ export function SearchStrategy() {
       return next
     })
     setDragIndex(null)
-    setIsCustomized(true)
+    markCustomized()
   }
+
+  const removeLayer = (id: string) => {
+    setLayers((prev) => prev.filter((l) => l.id !== id))
+    markCustomized()
+  }
+
+  const addLayer = (predefined: Omit<SimpleLayer, "id">) => {
+    setLayers((prev) => [
+      ...prev,
+      { id: String(Date.now()), ...predefined },
+    ])
+    setAddLayerOpen(false)
+    markCustomized()
+  }
+
+  const availableToAdd = PREDEFINED_LAYERS.filter(
+    (p) => !layers.some((l) => l.label === p.label)
+  )
+
+  // ── Condition editing (Refine Filters) ──
+  const updateCondition = useCallback(
+    (layerId: string, condIndex: number, condition: FilterCondition) => {
+      setLayers((prev) =>
+        prev.map((l) => {
+          if (l.id !== layerId) return l
+          const newConds = [...l.conditions]
+          newConds[condIndex] = condition
+          return { ...l, conditions: newConds }
+        })
+      )
+      markCustomized()
+    },
+    []
+  )
+
+  const removeCondition = useCallback((layerId: string, condIndex: number) => {
+    setLayers((prev) =>
+      prev.map((l) => {
+        if (l.id !== layerId) return l
+        return { ...l, conditions: l.conditions.filter((_, i) => i !== condIndex) }
+      })
+    )
+    markCustomized()
+  }, [])
+
+  const addCondition = (layerId: string) => {
+    setLayers((prev) =>
+      prev.map((l) => {
+        if (l.id !== layerId) return l
+        return {
+          ...l,
+          conditions: [
+            ...l.conditions,
+            { field: "Fund", operator: "equals", values: [], exclude: false },
+          ],
+        }
+      })
+    )
+    markCustomized()
+  }
+
+  const showPriority = useAnswerBank && useSupportingMaterials
 
   return (
     <div className="space-y-4">
-      {/* Section header */}
+
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">Search Strategy</h3>
         {isCustomized && (
@@ -250,114 +270,189 @@ export function SearchStrategy() {
         )}
       </div>
 
-      {/* ① Natural-language prompt */}
-      <div className="space-y-1.5">
-        <label className="text-xs text-muted-foreground">
-          How should we prioritize answers for this submission?
-        </label>
-        <textarea
-          value={prompt}
-          onChange={(e) => {
-            setPrompt(e.target.value)
-            setIsCustomized(true)
-          }}
-          rows={3}
-          className="w-full resize-none rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-0 transition-colors"
-          placeholder="Describe how answers should be prioritized…"
-        />
-      </div>
-
-      {/* ② Interpreted summary */}
-      <div className="space-y-1.5">
-        <StrategyPreview preview={preview} />
-        <p className="text-[11px] text-muted-foreground/60 px-0.5">
-          We translate your description into structured search filters.
+      {/* ── Fallback Order ── */}
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          Fallback Order
         </p>
+
+        {/* Chip row */}
+        <div className="flex items-center gap-1 flex-wrap">
+          {layers.map((layer, index) => (
+            <span key={layer.id} className="flex items-center gap-1">
+              {/* Chip */}
+              <span
+                draggable
+                onDragStart={(e) => handleDragStart(e, index)}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, index)}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground shadow-sm cursor-grab active:cursor-grabbing hover:border-primary/30 hover:shadow transition-all select-none"
+              >
+                <GripVertical className="h-3 w-3 text-muted-foreground/40" />
+                <span>{layer.label}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => { removeLayer(layer.id) }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") removeLayer(layer.id) }}
+                  className="ml-0.5 rounded-sm p-0.5 text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                  aria-label={`Remove ${layer.label}`}
+                >
+                  <X className="h-2.5 w-2.5" />
+                </span>
+              </span>
+
+              {/* Arrow */}
+              <ChevronRight className="h-3 w-3 text-muted-foreground/30 shrink-0" />
+            </span>
+          ))}
+
+          {/* Firmwide locked chip */}
+          <span className="inline-flex items-center gap-1 rounded-md border border-dashed border-border bg-secondary/30 px-2 py-1 text-xs font-medium text-muted-foreground select-none">
+            <Lock className="h-2.5 w-2.5" />
+            Firmwide
+          </span>
+        </div>
+
+        {/* + Add Layer */}
+        <Popover open={addLayerOpen} onOpenChange={setAddLayerOpen}>
+          <PopoverTrigger asChild>
+            <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mt-1">
+              <Plus className="h-3 w-3" />
+              Add Layer
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-44 p-1" align="start">
+            {availableToAdd.length === 0 ? (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">All layers added</p>
+            ) : (
+              availableToAdd.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() => addLayer(p)}
+                  className="w-full rounded-sm px-2 py-1.5 text-left text-xs text-foreground hover:bg-accent transition-colors"
+                >
+                  {p.label}
+                </button>
+              ))
+            )}
+          </PopoverContent>
+        </Popover>
       </div>
 
-      {/* ③ Advanced rules toggle */}
+      {/* ── Sources & Behavior ── */}
+      <div className="rounded-md border border-border bg-secondary/40 px-4 py-3 space-y-3">
+
+        {/* Sources */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Sources</p>
+          <div className="flex items-center gap-5">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="src-ab"
+                checked={useAnswerBank}
+                onCheckedChange={(v) => { setUseAnswerBank(!!v); markCustomized() }}
+              />
+              <Label htmlFor="src-ab" className="text-xs cursor-pointer">Answer Bank</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="src-sm"
+                checked={useSupportingMaterials}
+                onCheckedChange={(v) => { setUseSupportingMaterials(!!v); markCustomized() }}
+              />
+              <Label htmlFor="src-sm" className="text-xs cursor-pointer">Supporting Materials</Label>
+            </div>
+          </div>
+        </div>
+
+        {/* Priority — only when both sources active */}
+        {showPriority && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Priority</p>
+            <div className="flex items-center gap-4 flex-wrap">
+              {(["answer-bank", "supporting", "balanced"] as Priority[]).map((val) => {
+                const label = val === "answer-bank" ? "Answer Bank first" : val === "supporting" ? "Supporting first" : "Balanced"
+                return (
+                  <label key={val} className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="priority"
+                      value={val}
+                      checked={priority === val}
+                      onChange={() => { setPriority(val); markCustomized() }}
+                      className="accent-primary"
+                    />
+                    <span className="text-xs text-foreground">{label}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Verbatim */}
+        <div className="flex items-start gap-2 pt-0.5">
+          <Checkbox
+            id="verbatim"
+            checked={verbatim}
+            onCheckedChange={(v) => { setVerbatim(!!v); markCustomized() }}
+            className="mt-0.5"
+          />
+          <div>
+            <Label htmlFor="verbatim" className="text-xs cursor-pointer">Verbatim Only</Label>
+            <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+              Return exact matches only — no AI-generated responses
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Helper text ── */}
+      <p className="text-[11px] text-muted-foreground/60">
+        Results are filtered in order of specificity. If no matches are found, the next layer is used.
+      </p>
+
+      {/* ── Refine Filters (Advanced) ── */}
       <div className="space-y-3">
         <button
-          onClick={() => setIsAdvancedOpen((v) => !v)}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => setShowRefine((v) => !v)}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
         >
-          <Settings2 className="h-3.5 w-3.5" />
-          {isAdvancedOpen ? "Hide Advanced Rules" : "View Advanced Rules"}
-          {isAdvancedOpen ? (
-            <ChevronUp className="h-3 w-3" />
-          ) : (
-            <ChevronDown className="h-3 w-3" />
-          )}
-          {isCustomized && !isAdvancedOpen && (
-            <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px] font-medium">
-              Custom Strategy Applied
-            </Badge>
-          )}
+          Refine Filters (Advanced)
+          {showRefine ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>
 
-        {/* Advanced layer editor */}
-        {isAdvancedOpen && (
-          <div className="space-y-3">
-            <div className="space-y-0">
-              {layers.map((layer, index) => (
-                <div key={layer.id}>
-                  <StrategyRow
-                    layer={layer}
-                    index={index}
-                    onUpdate={updateLayer}
-                    onRemove={removeLayer}
-                    onDragStart={handleDragStart}
-                    onDragOver={handleDragOver}
-                    onDrop={handleDrop}
-                    totalRows={layers.length}
-                  />
-                  {index < layers.length - 1 && (
-                    <div className="flex items-center justify-center py-1">
-                      <div className="flex items-center gap-1.5 text-muted-foreground/40">
-                        <ArrowDown className="h-3.5 w-3.5" />
-                        <span className="text-[10px] font-medium uppercase tracking-wider">fallback</span>
-                        <ArrowDown className="h-3.5 w-3.5" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {/* Firmwide fallback */}
-              <div className="flex items-center justify-center py-1">
-                <div className="flex items-center gap-1.5 text-muted-foreground/40">
-                  <ArrowDown className="h-3.5 w-3.5" />
-                  <span className="text-[10px] font-medium uppercase tracking-wider">fallback</span>
-                  <ArrowDown className="h-3.5 w-3.5" />
+        {showRefine && (
+          <div className="space-y-3 rounded-md border border-border bg-card p-3">
+            {layers.map((layer) => (
+              <div key={layer.id} className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-foreground">{layer.label}</p>
+                <div className="space-y-1.5 pl-2 border-l-2 border-border">
+                  {layer.conditions.map((cond, ci) => (
+                    <InlineConditionRow
+                      key={ci}
+                      condition={cond}
+                      index={ci}
+                      onUpdate={(i, c) => updateCondition(layer.id, i, c)}
+                      onRemove={(i) => removeCondition(layer.id, i)}
+                      showRemove={layer.conditions.length > 1}
+                    />
+                  ))}
+                  <button
+                    onClick={() => addCondition(layer.id)}
+                    className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors mt-1"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add Condition
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center justify-center rounded-lg border border-dashed border-border bg-secondary/30 py-2">
-                <span className="text-xs font-medium text-muted-foreground">Firmwide (locked fallback)</span>
-              </div>
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={addLayer}
-              className="h-9 w-full border-dashed text-xs text-muted-foreground hover:text-foreground hover:border-primary/30"
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Add Strategy Layer
-            </Button>
-
-            {isCustomized && (
-              <div className="flex items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-3 py-2">
-                <Wand2 className="h-3.5 w-3.5 text-primary shrink-0" />
-                <span className="text-[11px] text-muted-foreground">
-                  <span className="font-medium text-foreground">Custom Strategy Applied.</span>{" "}
-                  Advanced rules override the natural language prompt.
-                </span>
-              </div>
-            )}
+            ))}
           </div>
         )}
       </div>
+
     </div>
   )
 }
