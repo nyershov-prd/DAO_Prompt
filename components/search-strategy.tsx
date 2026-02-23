@@ -255,14 +255,19 @@ export function SearchStrategy() {
     <div className="space-y-4">
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Search Strategy</h3>
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Search Strategy</h3>
+          <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+            Auto-generated from your selections. Adjust if needed.
+          </p>
+        </div>
         {isCustomized && (
           <Button
             variant="ghost"
             size="sm"
             onClick={reset}
-            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+            className="h-7 text-xs text-muted-foreground hover:text-foreground shrink-0"
           >
             <RotateCcw className="mr-1 h-3 w-3" />
             Reset
@@ -313,6 +318,11 @@ export function SearchStrategy() {
             Firmwide
           </span>
         </div>
+
+        {/* Helper text */}
+        <p className="text-[11px] text-muted-foreground/60">
+          We start with the most specific scope and expand only if no matches are found.
+        </p>
 
         {/* + Add Layer */}
         <Popover open={addLayerOpen} onOpenChange={setAddLayerOpen}>
@@ -419,7 +429,7 @@ export function SearchStrategy() {
           onClick={() => setShowRefine((v) => !v)}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
         >
-          Refine Filters (Advanced)
+          Advanced (Optional)
           {showRefine ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>
 
